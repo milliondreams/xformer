@@ -1,4 +1,4 @@
-package com.intellivision.xformer
+package com.tuplejump.xformer
 
 import play.api.http.MimeTypes
 import play.api.libs.iteratee.{Enumeratee, Iteratee}

@@ -1,4 +1,4 @@
-package com.intellivision.xformer
+package com.tuplejump.xformer
 
 import play.api.libs.json._
 
@@ -25,9 +25,13 @@ object XmlJsonHelper {
         s => internalJsonToXml(s)
       }
       case JsNull => Text("null")
-      case j@JsUndefined() => <error>{Text(j.toString())}</error>
+      case j@JsUndefined() => <error>
+        {Text(j.toString())}
+      </error>
     }
-    <result>{xmlResult}</result>
+    <result>
+      {xmlResult}
+    </result>
   }
 
   def xmlToJson(xmlData: NodeSeq): JsValue = {
@@ -38,8 +42,9 @@ object XmlJsonHelper {
     case class XArray(elems: List[XElem]) extends XElem
 
     def empty_?(node: Node) = node.child.isEmpty
-    def leaf_?(node: Node) = !node.descendant.find(_.isInstanceOf[Elem]).isDefined
-    def array_?(nodeNames: Seq[String]) = nodeNames.size != 1 && nodeNames.toList.distinct.size == 1
+    def leaf_?(node: Node) = !node.descendant.exists(_.isInstanceOf[Elem])
+    def array_?(nodeNames: Seq[String]) = nodeNames.size != 1 && nodeNames.distinct.size == 1
+    def pollutedArray_?(nodeNames: Seq[String]) = nodeNames.size != 1 && nodeNames.size > nodeNames.distinct.size
     def directChildren(n: Node): NodeSeq = n.child.filter(c => c.isInstanceOf[Elem])
     def nameOf(n: Node) = (if (Option(n.prefix).nonEmpty) n.prefix + ":" else "") + n.label
     def buildAttributes(n: Node) = n.attributes.map((a: MetaData) => (a.key, XValue(a.value.text))).toList
@@ -68,6 +73,15 @@ object XmlJsonHelper {
       case XArray(elems) => Json.toJson(elems.map(toJValue))
     }
 
+    def generateArray(nodes: NodeSeq, label: String): List[XElem] = {
+      val arr = XArray(nodes.toList.flatMap {
+        n =>
+          if (leaf_?(n) && n.attributes.length == 0) XValue(n.text) :: Nil
+          else buildNodes(n)
+      })
+      XLeaf((label, arr), Nil) :: Nil
+    }
+
     def buildNodes(xml: NodeSeq): List[XElem] = xml match {
       case n: Node =>
         if (empty_?(n)) XLeaf((nameOf(n), XValue("")), buildAttributes(n)) :: Nil
@@ -77,21 +91,38 @@ object XmlJsonHelper {
           XNode(buildAttributes(n) ++ children.map(nameOf).toList.zip(buildNodes(children))) :: Nil
         }
       case nodes: NodeSeq =>
+        /* Code for Arrays - Supports Simple and Polluted Arrays
+         * Simple Array - <users><user><name>abcd</name></user><user><name>pqrs</name></user></users>
+         * Polluted Array - <users><region>A</region><category>C</category><user><name>abcd</name></user><user><name>pqrs</name></user></users>
+         *
+         * The nodes are first grouped by the label before any processing is done. If there are more than one nodes with the same label,
+         * it is treated as an array else an ordinary leaf node
+         */
         val allLabels = nodes.map(_.label)
         if (array_?(allLabels)) {
-          val arr = XArray(nodes.toList.flatMap {
-            n =>
-              if (leaf_?(n) && n.attributes.length == 0) XValue(n.text) :: Nil
-              else buildNodes(n)
-          })
-          XLeaf((allLabels(0), arr), Nil) :: Nil
-        } else nodes.toList.flatMap(buildNodes)
+          generateArray(nodes, allLabels.head)
+        } else if (pollutedArray_?(allLabels)) {
+          val groupedNodes: Map[String, NodeSeq] = nodes.groupBy(_.label)
+          val (nonArrayElem, arrayElem) = groupedNodes.partition {
+            case (key, value) => value.size == 1
+          }
+          val arrayNodes = NodeSeq.fromSeq(arrayElem.values.flatten.toSeq)
+          val arrSeq = generateArray(arrayNodes, arrayNodes.head.label)
+          val nonArraySeq = nonArrayElem.values.flatMap(buildNodes).toSeq
+          println(nonArraySeq)
+          val result = nonArraySeq ++ arrSeq
+          println(result.toList)
+          result.toList
+        }
+        else nodes.toList.flatMap(buildNodes)
     }
 
-    buildNodes(xmlData) match {
-      case List(x@XLeaf(_, _ :: _)) => toJValue(x)
-      case List(x) => Json.obj(nameOf(xmlData.head) -> toJValue(x))
-      case x => Json.toJson(x.map(toJValue))
+    val generatedNodes: List[XElem] = buildNodes(xmlData)
+    println(generatedNodes)
+    generatedNodes match {
+      case List(x@XLeaf(_, _ :: _)) => println("evaluated as " + toJValue(x)); toJValue(x)
+      case List(x) => println("got list" + x); Json.obj(nameOf(xmlData.head) -> toJValue(x))
+      case x => println("got elem"); Json.toJson(x.map(toJValue))
     }
   }
 }
