@@ -3,10 +3,18 @@ package com.tuplejump.xformer
 import play.api.libs.json._
 
 import scala.xml._
+import scala.xml.Utility._
 
 object XmlJsonHelper {
 
-  def jsonToXml(jsonData: JsValue) = internalJsonToXml(jsonData).child.head
+  def jsonToXml(jsonData: JsValue) = trim(internalJsonToXml(jsonData)).child.head
+
+  private def buildNode(key: String, result: Elem, cn: Seq[Node]): Node = {
+    val finalResult = result.copy(null, key, Null, TopScope, false, cn)
+    val finalValue = trim(finalResult)
+    finalValue
+  }
+
 
   private def internalJsonToXml(jsonData: JsValue): Node = {
     val xmlResult = jsonData match {
@@ -14,7 +22,20 @@ object XmlJsonHelper {
         fields.map {
           case (key, value) => {
             val result = Elem(null, key, Null, TopScope, false)
-            result.copy(null, key, Null, TopScope, false, internalJsonToXml(value).child)
+            val childNodes = internalJsonToXml(value)
+            trim(childNodes) match {
+              case <result>{x}</result> => //removing additional result tag added in recursion
+                buildNode(key, result, x)
+              case other if other.child.size > 1 =>
+                if (other.child.head.label == "result") { // when there is an array of result elememnts
+                  other.child.map {
+                    cn =>
+                      buildNode(key, result, cn.child)
+                  }
+                } else {
+                  buildNode(key, result, other.child) // when there are no additional result tags
+                }
+            }
           }
         }
       }
@@ -25,14 +46,11 @@ object XmlJsonHelper {
         s => internalJsonToXml(s)
       }
       case JsNull => Text("null")
-      case j@JsUndefined() => <error>
-        {Text(j.toString())}
-      </error>
+      case j@JsUndefined() => <error>{Text(j.toString())}</error>
     }
-    <result>
-      {xmlResult}
-    </result>
+    <result>{xmlResult}</result>
   }
+
 
   def xmlToJson(xmlData: NodeSeq): JsValue = {
     sealed trait XElem
