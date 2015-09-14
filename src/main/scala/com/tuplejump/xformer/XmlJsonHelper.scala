@@ -78,7 +78,17 @@ object XmlJsonHelper {
 
 
     def toJValue(x: XElem): JsValue = x match {
-      case XValue(s) => Json.toJson(s)
+      case XValue(s) => {
+       /* val numberPattern: String = "[+-]?\\d+(\\.\\d+)?"
+        val isNumeric: Boolean = s.matches(numberPattern)
+        println(s+" "+isNumeric)
+        if(isNumeric) {
+          if(s.contains(".")) Json.toJson(s.toDouble) else Json.toJson(s.toLong)
+        } else {
+          Json.toJson(s)
+        }*/
+        Json.toJson(s)
+      }
       case XLeaf((name, value), attributes) => (value, attributes) match {
         case (_, Nil) => toJValue(value)
         case (XValue(""), xs) => Json.toJson(mkFields(xs))
@@ -103,44 +113,29 @@ object XmlJsonHelper {
     def buildNodes(xml: NodeSeq): List[XElem] = xml match {
       case n: Node =>
         if (empty_?(n)) XLeaf((nameOf(n), XValue("")), buildAttributes(n)) :: Nil
-        else if (leaf_?(n)) XLeaf((nameOf(n), XValue(n.text)), buildAttributes(n)) :: Nil
+        else if (leaf_?(n)) {
+          XLeaf((nameOf(n), XValue(n.text)), buildAttributes(n)) :: Nil
+        }
         else {
           val children = directChildren(n)
-          XNode(buildAttributes(n) ++ children.map(nameOf).toList.zip(buildNodes(children))) :: Nil
+          val childNodes: List[(String, XElem)] = children.groupBy(_.label).map {
+            case (label, elems) =>
+              (label, buildNodes(elems).head)
+          }.toList
+          XNode(buildAttributes(n) ++ childNodes) :: Nil
         }
       case nodes: NodeSeq =>
-        /* Code for Arrays - Supports Simple and Polluted Arrays
-         * Simple Array - <users><user><name>abcd</name></user><user><name>pqrs</name></user></users>
-         * Polluted Array - <users><region>A</region><category>C</category><user><name>abcd</name></user><user><name>pqrs</name></user></users>
-         *
-         * The nodes are first grouped by the label before any processing is done. If there are more than one nodes with the same label,
-         * it is treated as an array else an ordinary leaf node
-         */
         val allLabels = nodes.map(_.label)
         if (array_?(allLabels)) {
           generateArray(nodes, allLabels.head)
-        } else if (pollutedArray_?(allLabels)) {
-          val groupedNodes: Map[String, NodeSeq] = nodes.groupBy(_.label)
-          val (nonArrayElem, arrayElem) = groupedNodes.partition {
-            case (key, value) => value.size == 1
-          }
-          val arrayNodes = NodeSeq.fromSeq(arrayElem.values.flatten.toSeq)
-          val arrSeq = generateArray(arrayNodes, arrayNodes.head.label)
-          val nonArraySeq = nonArrayElem.values.flatMap(buildNodes).toSeq
-          println(nonArraySeq)
-          val result = nonArraySeq ++ arrSeq
-          println(result.toList)
-          result.toList
-        }
-        else nodes.toList.flatMap(buildNodes)
+        } else nodes.toList.flatMap(buildNodes)
     }
 
     val generatedNodes: List[XElem] = buildNodes(xmlData)
-    println(generatedNodes)
     generatedNodes match {
-      case List(x@XLeaf(_, _ :: _)) => println("evaluated as " + toJValue(x)); toJValue(x)
-      case List(x) => println("got list" + x); Json.obj(nameOf(xmlData.head) -> toJValue(x))
-      case x => println("got elem"); Json.toJson(x.map(toJValue))
+      case List(x@XLeaf(_, _ :: _)) => toJValue(x)
+      case List(x) => Json.obj(nameOf(xmlData.head) -> toJValue(x))
+      case x => Json.toJson(x.map(toJValue))
     }
   }
 }
