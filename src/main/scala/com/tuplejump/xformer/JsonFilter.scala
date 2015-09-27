@@ -7,6 +7,8 @@ import play.api.mvc._
 import play.mvc.Http
 import play.api.libs.concurrent.Execution.Implicits._
 
+import scala.Predef
+import scala.util.{Failure, Success, Try}
 import scala.xml.{XML, Node}
 
 object JsonFilter extends EssentialFilter {
@@ -14,7 +16,8 @@ object JsonFilter extends EssentialFilter {
     override def apply(request: RequestHeader): Iteratee[Array[Byte], Result] = {
       val resp = request.contentType match {
         case Some(MimeTypes.JSON) =>
-          val newHeaderPairs: Seq[(String, Seq[String])] = (request.headers.toMap + (Http.HeaderNames.CONTENT_TYPE -> Seq(MimeTypes.XML))).toSeq
+          val newHeaderPairs: Seq[(String, Seq[String])] =
+            (request.headers.toMap + (Http.HeaderNames.CONTENT_TYPE -> Seq(MimeTypes.XML))).toSeq
 
           val newHeaders = new Headers {
             override protected val data: Seq[(String, Seq[String])] = newHeaderPairs
@@ -52,7 +55,18 @@ object XformerEnumeratees {
 
   val xml2Json: Enumeratee[Array[Byte], Array[Byte]] = {
     val arrayConcat: Enumeratee[Array[Byte], Array[Byte]] = Enumeratee.grouped(Iteratee.consume[Array[Byte]]())
-    val xmlParser: Enumeratee[Array[Byte], Node] = Enumeratee.map[Array[Byte]](a => XML.loadString(new String(a)))
+
+    val xmlParser: Enumeratee[Array[Byte], Node] = Enumeratee.map[Array[Byte]] {
+      arr =>
+        val content: String = new Predef.String(arr)
+        Try {
+          XML.loadString(content)
+        } match {
+          case Success(node) => node
+          case Failure(ex) => <message>{content}</message>
+        }
+    }
+
     val convertAndSerialize: Enumeratee[Node, Array[Byte]] = Enumeratee.map[Node](x => XmlJsonHelper.xmlToJson(x).toString().getBytes())
     arrayConcat ><> xmlParser ><> convertAndSerialize
   }
